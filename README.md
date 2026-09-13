@@ -85,3 +85,4 @@ intent hash determinism + tamper detection, state machine, parser no-guess, idem
   (execution `y5spn6wkh4tcbnx4v3z7g`, `verified:true`, sponsored) — see `TX_PROOF.md`.
 - Demo video: unlisted YouTube link, 90–120s (4 scenarios: auto-pay, approval, rejection, tamper-block).
 - Surfaces: Telegram bot + REST direct execution (`/api/execute/transfer`) + audit trail.
+- Contact: ujjwalmittal012@gmail.com / [@PayagentPayBot](https://t.me/PayagentPayBot)
