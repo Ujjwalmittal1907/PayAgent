@@ -1,0 +1,76 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id               String            @id @default(cuid())
+  telegramUserId   String            @unique
+  telegramUsername String?
+  createdAt        DateTime          @default(now())
+  proposals        PaymentProposal[]
+}
+
+model PaymentProposal {
+  id                String   @id @default(cuid())
+  shortId           String   @unique
+  userId            String
+  user              User     @relation(fields: [userId], references: [id])
+  amount            String
+  token             String
+  recipient         String
+  chain             String   @default("base-sepolia")
+  purpose           String?
+  intentHash        String
+  workflowId        String?
+  workflowVersion   String?
+  status            String   @default("DRAFT")
+  approvalRequired  Boolean  @default(false)
+  approvalCount     Int      @default(0)
+  requiredApprovals Int      @default(1)
+  idempotencyKey    String   @unique
+  telegramChatId    String
+  telegramMessageId Int
+  expiresAt         DateTime
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  approvals         Approval[]
+  executions        Execution[]
+  auditEvents       AuditEvent[]
+}
+
+model Approval {
+  id             String          @id @default(cuid())
+  proposalId     String
+  proposal       PaymentProposal @relation(fields: [proposalId], references: [id])
+  telegramUserId String
+  decision       String
+  createdAt      DateTime        @default(now())
+
+  @@unique([proposalId, telegramUserId])
+}
+
+model Execution {
+  id                  String          @id @default(cuid())
+  proposalId          String
+  proposal            PaymentProposal @relation(fields: [proposalId], references: [id])
+  keeperHubExecutionId String?
+  txHash              String?
+  status              String          @default("PENDING")
+  error               String?
+  startedAt           DateTime        @default(now())
+  completedAt         DateTime?
+}
+
+model AuditEvent {
+  id         String          @id @default(cuid())
+  proposalId String?
+  proposal   PaymentProposal? @relation(fields: [proposalId], references: [id])
+  eventType  String
+  metadata   String?
+  createdAt  DateTime        @default(now())
+}
