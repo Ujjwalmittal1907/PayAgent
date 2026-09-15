@@ -23,6 +23,7 @@ const envSchema = z.object({
   REQUIRED_APPROVALS: z.coerce.number().default(1),
   PROPOSAL_EXPIRY_MINUTES: z.coerce.number().default(15),
   DATABASE_URL: z.string().default("file:./dev.db"),
+  ENCRYPTION_KEY: z.string().optional().default(""),
 });
 
 export const env = envSchema.parse(process.env);

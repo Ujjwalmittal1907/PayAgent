@@ -63,6 +63,21 @@ works identically — fund the Turnkey wallet via https://faucet.circle.com firs
 
 Missing amount/recipient is never guessed — the bot asks for it.
 
+## Pay from your own wallet (/connect)
+
+By default everyone shares the desk (org) wallet. Any user can attach their own
+KeeperHub key and pay from their own Turnkey wallet instead:
+
+1. Create a free account at `app.keeperhub.com` → Settings → Developer → API keys → Organisation key.
+2. Fund that wallet with Sepolia USDC (faucet).
+3. In a **private chat** with the bot: `/connect kh_yourKey` → bot validates the key,
+   discovers the wallet via a harmless dry-run, stores the key **AES-256-GCM encrypted**
+   (`ENCRYPTION_KEY`), and shows your wallet + balances. Delete your message after.
+4. `/whoami` — which wallet you pay from + your own daily spend. `/disconnect` — wipe the key.
+
+Daily caps are per-wallet: shared-desk spend counts globally (protects org funds),
+connected-user spend counts per user. Approvals/policies/intent-lock apply identically.
+
 ## Architecture
 
 - `src/bot/` — Telegraf handlers (thin; all logic in services)

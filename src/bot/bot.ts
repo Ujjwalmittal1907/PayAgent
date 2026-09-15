@@ -4,8 +4,10 @@ import { env } from "../config/env.js";
 import { parsePaymentText, parseWithLLM } from "../ai/intent-parser.js";
 import { createProposal, executeProposal } from "../payments/payment-service.js";
 import { recordApproval } from "../payments/approval-service.js";
-import { db } from "../database/prisma.js";
+import { db, spentTodayCents } from "../database/prisma.js";
 import { audit } from "../audit/audit-service.js";
+import { KeeperHubClient } from "../integrations/keeperhub/client.js";
+import { encryptSecret, keyPrefix } from "../utils/crypto.js";
 import { approvalKeyboard } from "./keyboards.js";
 import { helpText, keeperText, policyText, proposalSummary } from "./messages.js";
 import { escHtml } from "../utils/validation.js";
@@ -149,8 +151,91 @@ export function buildBot(): Telegraf {
     );
   });
 
-  bot.command("cancel", async (ctx) => {
+  bot.command("connect", async (ctx) => {
     const parts = ctx.message && "text" in ctx.message ? ctx.message.text.split(/\s+/) : [];
+    const key = (parts[1] ?? "").trim();
+    if (!key.startsWith("kh_")) return ctx.reply("Usage: /connect kh_yourKeeperHubKey\nGet one at app.keeperhub.com → Settings → Developer → API keys.\n⚠️ Do this in a private chat, then delete your message.");
+    if (!env.ENCRYPTION_KEY) return ctx.reply("❌ Server missing ENCRYPTION_KEY — admin must set it before /connect works.");
+    const userId = String(ctx.from?.id ?? "unknown");
+    try {
+      const probe = new KeeperHubClient(key);
+      await probe.verifyKey();
+      // Discover the key's wallet via a harmless dry-run (never broadcasts).
+      // Success and underfunded-failure responses both carry `from`.
+      let wallet: string | null = null;
+      try {
+        const sim = (await probe.dryRunTransfer({
+          chainId: "11155111",
+          recipientAddress: "0x000000000000000000000000000000000000dEaD",
+          amount: "0.01",
+          tokenAddress: "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
+        })) as { from?: string };
+        if (sim.from) wallet = sim.from;
+      } catch (e) {
+        const m = /(\{"success".*\})/s.exec(e instanceof Error ? e.message : "");
+        if (m) {
+          try {
+            const obj = JSON.parse(m[1]) as { from?: string };
+            if (obj.from) wallet = obj.from;
+          } catch { /* non-fatal */ }
+        }
+      }
+      let user = await db().user.findUnique({ where: { telegramUserId: userId } });
+      if (!user)
+        user = await db().user.create({ data: { telegramUserId: userId, telegramUsername: ctx.from?.username } });
+      await db().user.update({
+        where: { id: user.id },
+        data: { keeperKeyEnc: encryptSecret(key), keeperWallet: wallet, connectedAt: new Date() },
+      });
+      await audit(null, "WALLET_CONNECTED", { telegramUserId: userId, keyPrefix: keyPrefix(key), wallet });
+      let bal = "";
+      if (wallet && /^0x[a-fA-F0-9]{40}$/.test(wallet)) {
+        try {
+          const b = await getBalances(wallet as `0x${string}`, "ethereum-sepolia");
+          bal = `\nUSDC: <code>${escHtml(b.usdc)}</code>\nETH: <code>${escHtml(b.eth)}</code>`;
+        } catch { /* non-fatal */ }
+      }
+      await ctx.replyWithHTML(
+        `🔗 <b>CONNECTED — you now pay from your own wallet</b>\nWallet: ${wallet ? `<code>${escHtml(wallet)}</code>` : "detected at first payment"}${bal}\nKey: <code>${escHtml(keyPrefix(key))}…</code>\n\nNow delete your /connect message. Run /disconnect anytime to remove the key.`,
+      );
+    } catch (e) {
+      await ctx.reply(`❌ Key rejected: ${e instanceof Error ? e.message.slice(0, 200) : String(e)}`);
+    }
+  });
+
+  bot.command("disconnect", async (ctx) => {
+    const userId = String(ctx.from?.id ?? "unknown");
+    const user = await db().user.findUnique({ where: { telegramUserId: userId } });
+    if (!user?.keeperKeyEnc) return ctx.reply("Not connected. Everyone shares the desk wallet by default.");
+    await db().user.update({ where: { id: user.id }, data: { keeperKeyEnc: null, keeperWallet: null, connectedAt: null } });
+    await audit(null, "WALLET_DISCONNECTED", { telegramUserId: userId });
+    await ctx.reply("🔌 Disconnected — you're back on the shared desk wallet.");
+  });
+
+  bot.command("whoami", async (ctx) => {
+    const userId = String(ctx.from?.id ?? "unknown");
+    const user = await db().user.findUnique({ where: { telegramUserId: userId } });
+    if (!user?.keeperKeyEnc) {
+      const spent = await spentTodayCents("org");
+      return ctx.replyWithHTML(
+        `<b>WHOAMI</b>\nMode: shared desk wallet (org)\nDesk spent today: $${Number(spent) / 100}\n\n/connect your own kh_ key to pay from your wallet.`,
+      );
+    }
+    const scope = "user";
+    const spent = await spentTodayCents("user", user.id);
+    let bal = "";
+    if (user.keeperWallet && /^0x[a-fA-F0-9]{40}$/.test(user.keeperWallet)) {
+      try {
+        const b = await getBalances(user.keeperWallet as `0x${string}`, "ethereum-sepolia");
+        bal = `\nUSDC: <code>${escHtml(b.usdc)}</code> | ETH: <code>${escHtml(b.eth)}</code>`;
+      } catch { /* non-fatal */ }
+    }
+    await ctx.replyWithHTML(
+      `<b>WHOAMI</b>\nMode: own wallet (${scope}) ✅\nWallet: <code>${escHtml(user.keeperWallet ?? "unknown")}</code>${bal}\nYour spend today: $${Number(spent) / 100}`,
+    );
+  });
+
+  bot.command("cancel", async (ctx) => {    const parts = ctx.message && "text" in ctx.message ? ctx.message.text.split(/\s+/) : [];
     const id = (parts[1] ?? "").replace(/^#/, "");
     if (!id) return ctx.reply("Usage: /cancel P-101");
     const p = await db().paymentProposal.findUnique({ where: { shortId: id } });

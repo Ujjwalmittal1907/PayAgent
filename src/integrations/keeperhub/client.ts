@@ -1,10 +1,10 @@
 import { env, requireKeeperHub } from "../../config/env.js";
 import type { KeeperStatusResult, KeeperTransferInput } from "./types.js";
 
-function headers(idempotencyKey?: string): Record<string, string> {
+function headers(apiKey: string, idempotencyKey?: string): Record<string, string> {
   return {
     "Content-Type": "application/json",
-    Authorization: `Bearer ${env.KEEPERHUB_API_KEY}`,
+    Authorization: `Bearer ${apiKey}`,
     ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
   };
 }
@@ -28,13 +28,28 @@ async function parseOrThrow(res: Response, path: string): Promise<Record<string,
  */
 export class KeeperHubClient {
   base = env.KEEPERHUB_BASE_URL.replace(/\/$/, "");
+  private overrideKey: string | null;
+
+  /** Pass a user's own key (from /connect) to execute under their wallet. Null = org default. */
+  constructor(apiKey?: string | null) {
+    this.overrideKey = apiKey ?? null;
+  }
+
+  private get key(): string {
+    return this.overrideKey ?? env.KEEPERHUB_API_KEY;
+  }
+
+  private requireKey() {
+    if (this.overrideKey) return; // user key already validated at /connect time
+    requireKeeperHub();
+  }
 
   /** Dry run: simulate:true — never signs/broadcasts. mcp:read is enough. */
   async dryRunTransfer(input: KeeperTransferInput): Promise<Record<string, unknown>> {
-    requireKeeperHub();
+    this.requireKey();
     const res = await fetch(`${this.base}/api/execute/transfer`, {
       method: "POST",
-      headers: headers(),
+      headers: headers(this.key),
       body: JSON.stringify({ ...input, simulate: true }),
     });
     return parseOrThrow(res, "POST /api/execute/transfer simulate");
@@ -45,19 +60,19 @@ export class KeeperHubClient {
     input: KeeperTransferInput,
     idempotencyKey: string,
   ): Promise<Record<string, unknown>> {
-    requireKeeperHub();
+    this.requireKey();
     const res = await fetch(`${this.base}/api/execute/transfer`, {
       method: "POST",
-      headers: headers(idempotencyKey),
+      headers: headers(this.key, idempotencyKey),
       body: JSON.stringify({ ...input }),
     });
     return parseOrThrow(res, "POST /api/execute/transfer");
   }
 
   async getStatus(executionId: string): Promise<{ json: KeeperStatusResult; pollHint: number | null }> {
-    requireKeeperHub();
+    this.requireKey();
     const res = await fetch(`${this.base}/api/execute/${executionId}/status`, {
-      headers: { Authorization: `Bearer ${env.KEEPERHUB_API_KEY}` },
+      headers: { Authorization: `Bearer ${this.key}` },
     });
     const hint = res.headers.get("x-poll-interval-hint");
     const json = (await parseOrThrow(res, "GET /api/execute/{id}/status")) as unknown as KeeperStatusResult;
@@ -120,9 +135,9 @@ export class KeeperHubClient {
   }
 
   async verifyKey(): Promise<Record<string, unknown>> {
-    requireKeeperHub();
+    this.requireKey();
     const res = await fetch(`${this.base}/api/keys`, {
-      headers: { Authorization: `Bearer ${env.KEEPERHUB_API_KEY}` },
+      headers: { Authorization: `Bearer ${this.key}` },
     });
     return parseOrThrow(res, "GET /api/keys");
   }

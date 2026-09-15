@@ -7,11 +7,16 @@ export function db(): PrismaClient {
   return prisma;
 }
 
-export async function spentTodayCents(): Promise<bigint> {
+export async function spentTodayCents(scope?: string, userId?: string): Promise<bigint> {
   const start = new Date();
   start.setUTCHours(0, 0, 0, 0);
   const rows = await db().paymentProposal.findMany({
-    where: { status: "SUCCESS", createdAt: { gte: start } },
+    where: {
+      status: "SUCCESS",
+      createdAt: { gte: start },
+      ...(scope ? { execScope: scope } : {}),
+      ...(userId ? { userId } : {}),
+    },
     select: { amount: true },
   });
   let total = 0n;

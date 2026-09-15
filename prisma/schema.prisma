@@ -11,6 +11,9 @@ model User {
   id               String            @id @default(cuid())
   telegramUserId   String            @unique
   telegramUsername String?
+  keeperKeyEnc     String?
+  keeperWallet     String?
+  connectedAt      DateTime?
   createdAt        DateTime          @default(now())
   proposals        PaymentProposal[]
 }
@@ -33,6 +36,8 @@ model PaymentProposal {
   approvalCount     Int      @default(0)
   requiredApprovals Int      @default(1)
   idempotencyKey    String   @unique
+  execScope         String   @default("org")
+  execWallet        String?
   telegramChatId    String
   telegramMessageId Int
   expiresAt         DateTime

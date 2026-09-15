@@ -20,8 +20,10 @@ describe("policy", () => {
     const r = evaluatePolicy({ ...base, amount: "50" });
     expect(r.allowed).toBe(false);
   });
-  it("rejects daily overflow", () => {
-    const r = evaluatePolicy({ ...base, amount: "1", spentTodayCents: 950n });
+  it("rejects daily overflow", async () => {
+    const { env } = await import("./config/env.js");
+    const capCents = BigInt(Math.round(env.PAYMENT_DAILY_LIMIT_USD * 100));
+    const r = evaluatePolicy({ ...base, amount: "1", spentTodayCents: capCents - 50n });
     expect(r.allowed).toBe(false);
   });
   it("rejects bad token/chain/address", () => {
@@ -71,5 +73,29 @@ describe("idempotency", () => {
     const k2 = stableIdempotencyKey(["1", 2, "P-101", "base-sepolia", "0xabc", "0.5", "USDC"]);
     expect(k1).toBe(k2);
     expect(stableIdempotencyKey(["1", 2, "P-102", "base-sepolia", "0xABC", "0.5", "USDC"])).not.toBe(k1);
+  });
+});
+
+describe("connect crypto", () => {
+  it("encrypt/decrypt roundtrip, wrong key fails", async () => {
+    process.env.ENCRYPTION_KEY = "ab".repeat(32);
+    const { encryptSecret, decryptSecret, keyPrefix } = await import("./utils/crypto.js");
+    const enc = encryptSecret("kh_test_secret");
+    expect(enc).not.toContain("kh_test_secret");
+    expect(decryptSecret(enc)).toBe("kh_test_secret");
+    expect(keyPrefix("kh_abcdef123")).toBe("kh_abc");
+    expect(encryptSecret("kh_test_secret")).not.toBe(enc); // random IV
+    process.env.ENCRYPTION_KEY = "cd".repeat(32);
+    expect(() => decryptSecret(enc)).toThrow(); // auth tag mismatch
+  });
+  it("client resolution: connected user gets own scope", async () => {
+    process.env.ENCRYPTION_KEY = "ab".repeat(32);
+    const { encryptSecret } = await import("./utils/crypto.js");
+    const { clientForUser } = await import("./payments/payment-service.js");
+    const org = clientForUser({ keeperKeyEnc: null, keeperWallet: null });
+    expect(org.scope).toBe("org");
+    const mine = clientForUser({ keeperKeyEnc: encryptSecret("kh_user_key"), keeperWallet: "0xabc" });
+    expect(mine.scope).toBe("user");
+    expect(mine.wallet).toBe("0xabc");
   });
 });

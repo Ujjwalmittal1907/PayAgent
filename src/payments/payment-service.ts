@@ -1,7 +1,8 @@
 import { approverIds, DEFAULT_CHAIN, env } from "../config/env.js";
 import { db, allocateShortId, spentTodayCents } from "../database/prisma.js";
 import { audit } from "../audit/audit-service.js";
-import { keeperHub } from "../integrations/keeperhub/client.js";
+import { KeeperHubClient, keeperHub } from "../integrations/keeperhub/client.js";
+import { decryptSecret } from "../utils/crypto.js";
 import { buildTransferInput } from "../integrations/keeperhub/workflow-builder.js";
 import { evaluatePolicy } from "./policy-engine.js";
 import { assertTransition, type PaymentStatus } from "./state-machine.js";
@@ -28,7 +29,10 @@ export async function createProposal(input: CreateProposalInput) {
     });
 
   const chain = (input.chain ?? DEFAULT_CHAIN).toLowerCase();
-  const spent = await spentTodayCents();
+  const { client: kh, scope, wallet } = clientForUser(user);
+  // Daily cap is per-wallet: org-scope counts all desk spend (protects shared funds),
+  // user-scope counts only that user's spend.
+  const spent = await spentTodayCents(scope, scope === "user" ? user.id : undefined);
   const policy = evaluatePolicy({ amount: input.amount, token: input.token, recipient: input.recipient, chain, spentTodayCents: spent });
 
   const intent = { amount: input.amount, token: input.token.toUpperCase(), recipient: input.recipient, chain, purpose: input.purpose ?? null };
@@ -51,6 +55,8 @@ export async function createProposal(input: CreateProposalInput) {
       approvalRequired: policy.requiresApproval ?? false,
       requiredApprovals: env.REQUIRED_APPROVALS,
       idempotencyKey: idem,
+      execScope: scope,
+      execWallet: wallet,
       telegramChatId: input.telegramChatId,
       telegramMessageId: input.telegramMessageId,
       expiresAt,
@@ -68,9 +74,9 @@ export async function createProposal(input: CreateProposalInput) {
 
   await transition(proposal.id, "DRAFT", "POLICY_APPROVED");
 
-  // KeeperHub validate + dry-run (real, not mocked)
+  // KeeperHub validate + dry-run (real, not mocked) — under the payer's own credential
   const transfer = buildTransferInput(intent);
-  const validation = await keeperHub.validateWorkflow(transfer);
+  const validation = await kh.validateWorkflow(transfer);
   await audit(proposal.id, "WORKFLOW_CREATED", { transfer });
   if (!validation.valid) {
     await transition(proposal.id, "POLICY_APPROVED", "DRY_RUN_FAILED");
@@ -82,7 +88,7 @@ export async function createProposal(input: CreateProposalInput) {
 
   try {
     await audit(proposal.id, "DRY_RUN_STARTED", {});
-    const sim = await keeperHub.dryRunWorkflow(transfer);
+    const sim = await kh.dryRunWorkflow(transfer);
     const ok = (sim as { success?: boolean; wouldRevert?: boolean }).success !== false && (sim as { wouldRevert?: boolean }).wouldRevert !== true;
     if (!ok) throw new Error(`Dry run refused: ${JSON.stringify(sim)}`);
     await audit(proposal.id, "DRY_RUN_SUCCEEDED", { sim });
@@ -123,6 +129,23 @@ export function isApprover(telegramUserId: string): boolean {
   return approverIds.includes(telegramUserId);
 }
 
+/**
+ * Resolve the execution credential for a user.
+ * Connected (/connect) users pay from their OWN wallet under their key;
+ * everyone else shares the org desk wallet.
+ */
+export function clientForUser(user: { keeperKeyEnc: string | null; keeperWallet: string | null }): {
+  client: KeeperHubClient;
+  scope: string;
+  wallet: string | null;
+} {
+  if (user.keeperKeyEnc) {
+    const key = decryptSecret(user.keeperKeyEnc);
+    return { client: new KeeperHubClient(key), scope: "user", wallet: user.keeperWallet };
+  }
+  return { client: keeperHub, scope: "org", wallet: null };
+}
+
 /** Execute locked intent through KeeperHub. Blocks on hash mismatch + double-spend. */
 export async function executeProposal(proposalId: string) {
   const prisma = db();
@@ -148,7 +171,9 @@ export async function executeProposal(proposalId: string) {
 
   try {
     const transfer = buildTransferInput({ amount: p.amount, token: p.token, recipient: p.recipient, chain: p.chain, purpose: p.purpose });
-    const result = await keeperHub.executeWorkflow(transfer, p.idempotencyKey);
+    const payer = await prisma.user.findUniqueOrThrow({ where: { id: p.userId } });
+    const { client: kh } = clientForUser(payer);
+    const result = await kh.executeWorkflow(transfer, p.idempotencyKey);
     const raw = result as unknown as Record<string, unknown>;
     const txHash = (raw.transactionHash as string | undefined) ?? (raw.txHash as string | undefined);
     const executionId = (raw.executionId as string | undefined) ?? null;
