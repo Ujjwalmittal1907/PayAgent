@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.db*
+.env
+.git/
+*.mp4
+PayAgent_demo_video.mp4
+keeperHub.png
+Prisma.png

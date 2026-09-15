@@ -37,6 +37,16 @@ or touch the chain. KeeperHub is the sole execution layer.
 3. `pnpm exec prisma db push` (SQLite, no Docker needed)
 4. `pnpm dev` — API on `:8788` + Telegram bot polling.
 
+## Deploy (Railway — live URL for judges)
+
+1. [railway.app](https://railway.app) → New Project → **Deploy from GitHub repo** → select `PayAgent`.
+2. Add a **Volume**, mount path `/app/data` (SQLite survives restarts).
+3. **Variables**: `TELEGRAM_BOT_TOKEN`, `KEEPERHUB_API_KEY`,
+   `DATABASE_URL=file:/app/data/prod.db` (+ policy vars as needed; RPC/chain defaults work).
+4. Deploy — Railway builds via `Dockerfile` and runs `prisma db push && node dist/src/index.js`.
+5. Open the Railway public domain `/health` → `{"ok":true}` = judges can reach it.
+6. **Stop your local bot** (`Ctrl+C`) once deployed — two pollers on one token steal each other's updates (409).
+
 Chain default: `ethereum-sepolia` (11155111, funded/proven). `base-sepolia` (84532)
 works identically — fund the Turnkey wallet via https://faucet.circle.com first.
 
