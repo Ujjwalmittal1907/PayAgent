@@ -9,7 +9,7 @@ import { audit } from "../audit/audit-service.js";
 import { KeeperHubClient } from "../integrations/keeperhub/client.js";
 import { encryptSecret, keyPrefix } from "../utils/crypto.js";
 import { approvalKeyboard } from "./keyboards.js";
-import { helpText, keeperText, policyText, proposalSummary } from "./messages.js";
+import { helpText, keeperText, policyText, proposalSummary, connectRequiredText } from "./messages.js";
 import { escHtml } from "../utils/validation.js";
 import { getExplorerTxUrl } from "../blockchain/explorer.js";
 import { getBalances } from "../blockchain/client.js";
@@ -80,6 +80,10 @@ async function handlePaymentRequest(
       await ctx.reply(`❌ Execution failed: ${e instanceof Error ? e.message : String(e)}`);
     }
   } catch (e) {
+    if (e instanceof Error && e.message.includes("CONNECT_REQUIRED")) {
+      await ctx.replyWithHTML(connectRequiredText());
+      return;
+    }
     await ctx.reply(`❌ ${e instanceof Error ? e.message : String(e)}`);
   }
 }
@@ -216,10 +220,7 @@ export function buildBot(): Telegraf {
     const userId = String(ctx.from?.id ?? "unknown");
     const user = await db().user.findUnique({ where: { telegramUserId: userId } });
     if (!user?.keeperKeyEnc) {
-      const spent = await spentTodayCents("org");
-      return ctx.replyWithHTML(
-        `<b>WHOAMI</b>\nMode: shared desk wallet (org)\nDesk spent today: $${Number(spent) / 100}\n\n/connect your own kh_ key to pay from your wallet.`,
-      );
+      return ctx.replyWithHTML(connectRequiredText());
     }
     const scope = "user";
     const spent = await spentTodayCents("user", user.id);

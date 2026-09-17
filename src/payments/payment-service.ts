@@ -1,7 +1,7 @@
 import { approverIds, DEFAULT_CHAIN, env } from "../config/env.js";
 import { db, allocateShortId, spentTodayCents } from "../database/prisma.js";
 import { audit } from "../audit/audit-service.js";
-import { KeeperHubClient, keeperHub } from "../integrations/keeperhub/client.js";
+import { KeeperHubClient } from "../integrations/keeperhub/client.js";
 import { decryptSecret } from "../utils/crypto.js";
 import { buildTransferInput } from "../integrations/keeperhub/workflow-builder.js";
 import { evaluatePolicy } from "./policy-engine.js";
@@ -30,9 +30,8 @@ export async function createProposal(input: CreateProposalInput) {
 
   const chain = (input.chain ?? DEFAULT_CHAIN).toLowerCase();
   const { client: kh, scope, wallet } = clientForUser(user);
-  // Daily cap is per-wallet: org-scope counts all desk spend (protects shared funds),
-  // user-scope counts only that user's spend.
-  const spent = await spentTodayCents(scope, scope === "user" ? user.id : undefined);
+  // Daily cap is per-wallet: every payer is key-scoped, so only their own spend counts.
+  const spent = await spentTodayCents(scope, user.id);
   const policy = evaluatePolicy({ amount: input.amount, token: input.token, recipient: input.recipient, chain, spentTodayCents: spent });
 
   const intent = { amount: input.amount, token: input.token.toUpperCase(), recipient: input.recipient, chain, purpose: input.purpose ?? null };
@@ -131,19 +130,17 @@ export function isApprover(telegramUserId: string): boolean {
 
 /**
  * Resolve the execution credential for a user.
- * Connected (/connect) users pay from their OWN wallet under their key;
- * everyone else shares the org desk wallet.
+ * There is NO shared-wallet fallback: unconnected users cannot pay.
+ * Throws CONNECT_REQUIRED so the bot can reply with onboarding steps.
  */
 export function clientForUser(user: { keeperKeyEnc: string | null; keeperWallet: string | null }): {
   client: KeeperHubClient;
   scope: string;
   wallet: string | null;
 } {
-  if (user.keeperKeyEnc) {
-    const key = decryptSecret(user.keeperKeyEnc);
-    return { client: new KeeperHubClient(key), scope: "user", wallet: user.keeperWallet };
-  }
-  return { client: keeperHub, scope: "org", wallet: null };
+  if (!user.keeperKeyEnc) throw new Error("CONNECT_REQUIRED");
+  const key = decryptSecret(user.keeperKeyEnc);
+  return { client: new KeeperHubClient(key), scope: "user", wallet: user.keeperWallet };
 }
 
 /** Execute locked intent through KeeperHub. Blocks on hash mismatch + double-spend. */

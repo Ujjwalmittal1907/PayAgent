@@ -88,12 +88,11 @@ describe("connect crypto", () => {
     process.env.ENCRYPTION_KEY = "cd".repeat(32);
     expect(() => decryptSecret(enc)).toThrow(); // auth tag mismatch
   });
-  it("client resolution: connected user gets own scope", async () => {
+  it("client resolution: connected user gets own scope, strangers are refused", async () => {
     process.env.ENCRYPTION_KEY = "ab".repeat(32);
     const { encryptSecret } = await import("./utils/crypto.js");
     const { clientForUser } = await import("./payments/payment-service.js");
-    const org = clientForUser({ keeperKeyEnc: null, keeperWallet: null });
-    expect(org.scope).toBe("org");
+    expect(() => clientForUser({ keeperKeyEnc: null, keeperWallet: null })).toThrow("CONNECT_REQUIRED");
     const mine = clientForUser({ keeperKeyEnc: encryptSecret("kh_user_key"), keeperWallet: "0xabc" });
     expect(mine.scope).toBe("user");
     expect(mine.wallet).toBe("0xabc");

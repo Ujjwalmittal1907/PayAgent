@@ -34,7 +34,7 @@ PayAgent is a Telegram-native payment desk that splits the job the way it should
 |---|---|
 | Agent reinterprets payments | Canonical intent + `sha256` intent-hash locked at proposal time. Any change before execution → `INTENT_CHANGED`, execution blocked, fresh approval required. The LLM only extracts intent; it can never invent recipients, amounts, or touch the chain. |
 | No spending discipline | Deterministic policy engine: auto-execute ≤ $1, human approval $1–$10, hard reject above. Daily caps computed from persisted settlements (UTC), per-wallet. Invalid addresses, wrong tokens, and unknown networks die before anything onchain is touched. |
-| Shared-wallet theft | **Bring your own wallet.** `/connect kh_yourKey` attaches a user's own KeeperHub key (AES-256-GCM encrypted at rest); their payments settle from *their* Turnkey wallet under *their* credential. Unconnected users share the desk wallet under its own cap. Nobody can spend anybody else's money. |
+| Shared-wallet theft | **There is no shared wallet.** `/connect kh_yourKey` is mandatory: every user attaches their own KeeperHub key (AES-256-GCM encrypted at rest) and pays from *their own* Turnkey wallet under *their* credential. Unconnected users can't pay at all — they get onboarding steps, not a transaction. Nobody can ever spend anybody else's money. |
 | Midnight execution failures | KeeperHub is the sole execution layer: `simulate:true` dry-run first (reverts, bad addresses, empty balances refused pre-broadcast), stable `Idempotency-Key` so duplicate taps never double-spend, `GET /api/execute/{id}/status` honoring the poll hint, `receipts[].verified:true` as audit proof. Turnkey non-custodial wallets, sponsored gas — no private keys anywhere in the app. |
 | "What just happened?" | 16-event audit trail per payment (`PAYMENT_CREATED` → `EXECUTION_SUCCEEDED`, approvals, rejections, tamper blocks), queryable in Telegram (`/history`, `/status P-102`) and over REST (`/api/proposals/:id/audit`). |
 
@@ -98,10 +98,10 @@ works identically — fund the Turnkey wallet via https://faucet.circle.com firs
 
 Missing amount/recipient is never guessed — the bot asks for it.
 
-## Pay from your own wallet (/connect)
+## Pay from your own wallet (/connect — required)
 
-By default everyone shares the desk (org) wallet. Any user can attach their own
-KeeperHub key and pay from their own Turnkey wallet instead:
+There is no shared or desk wallet: `/connect` is the front door. Any `/pay` (or `/whoami`)
+from an unconnected user replies with the onboarding steps instead of a transaction:
 
 1. Create a free account at `app.keeperhub.com` → Settings → Developer → API keys → Organisation key.
 2. Fund that wallet with Sepolia USDC (faucet).
@@ -110,8 +110,9 @@ KeeperHub key and pay from their own Turnkey wallet instead:
    (`ENCRYPTION_KEY`), and shows your wallet + balances. Delete your message after.
 4. `/whoami` — which wallet you pay from + your own daily spend. `/disconnect` — wipe the key.
 
-Daily caps are per-wallet: shared-desk spend counts globally (protects org funds),
-connected-user spend counts per user. Approvals/policies/intent-lock apply identically.
+Daily caps are per-wallet, counted from each user's own settlements. Approvals, policies,
+and the intent-lock apply identically to everyone. The operator's `KEEPERHUB_API_KEY`
+never funds user payments.
 
 ## Architecture
 
