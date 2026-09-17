@@ -4,6 +4,14 @@ import { db } from "../database/prisma.js";
 export async function registerRoutes(app: FastifyInstance) {
   app.get("/health", async () => ({ ok: true, service: "payagent", time: new Date().toISOString() }));
 
+  // Deployment fingerprint: proves exactly which commit is serving (Railway injects these).
+  app.get("/version", async () => ({
+    service: "payagent",
+    commit: process.env.RAILWAY_GIT_COMMIT_SHA ?? "unknown",
+    branch: process.env.RAILWAY_GIT_BRANCH ?? "unknown",
+    gate: "connect-required",
+  }));
+
   app.get("/api/proposals/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
     const p = await db().paymentProposal.findFirst({
